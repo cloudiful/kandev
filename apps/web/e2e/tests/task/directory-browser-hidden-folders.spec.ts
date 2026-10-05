@@ -1,7 +1,7 @@
 import { expect, test } from "../../fixtures/test-base";
 import { controlHeight } from "../../helpers/control-sizing";
 import { mockFolderAvailability } from "../../helpers/open-task-folder";
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import type { BackendContext } from "../../fixtures/backend";
@@ -27,6 +27,21 @@ async function openFolderRowPicker(page: Page): Promise<ReturnType<typeof page.l
   const picker = page.locator('[data-testid="folder-picker-popover"][data-state="open"]').last();
   await expect(picker).toBeVisible();
   return picker;
+}
+
+/**
+ * The picker animates in, so a capture taken the moment it becomes visible can
+ * catch the surface mid-transition. Await the picker's animations so a
+ * published asset always shows a settled popover.
+ */
+async function settlePicker(picker: Locator): Promise<void> {
+  await picker.evaluate((node) =>
+    Promise.all(
+      node
+        .getAnimations({ subtree: true })
+        .map((animation) => animation.finished.catch(() => undefined)),
+    ),
+  );
 }
 
 /** Opens the task's Add Repositories to workspace dialog with one empty folder
@@ -56,7 +71,6 @@ test.describe("Directory browser hidden folders", () => {
     apiClient,
     seedData,
     backend,
-    prCapture,
   }) => {
     test.setTimeout(120_000);
     createBrowsableDirectories(backend);
@@ -85,7 +99,6 @@ test.describe("Directory browser hidden folders", () => {
       "aria-checked",
       "false",
     );
-    await prCapture.screenshot("directory-browser-hidden-off", { fullPage: false });
   });
 
   // @covers AC-WORKSPACES-HIDDEN-FOLDERS-001.3
@@ -115,6 +128,16 @@ test.describe("Directory browser hidden folders", () => {
     const picker = await openFolderRowPicker(testPage);
     const entries = picker.getByTestId("folder-picker-entry");
     const hiddenEntry = entries.filter({ hasText: HIDDEN_DIRECTORY });
+    const reveal = picker.getByRole("switch", { name: "Hidden folders" });
+
+    // The off state, in the same test that reveals. Both states are captured
+    // here so one flush records the whole transition: PrAssetCapture replaces
+    // this spec's manifest entries on every flush, so a capture left in
+    // another test of the same file would be dropped.
+    await expect(reveal).toHaveAttribute("aria-checked", "false");
+    await expect(hiddenEntry).toHaveCount(0);
+    await settlePicker(picker);
+    await prCapture.screenshot("directory-browser-hidden-off", { fullPage: false });
 
     await picker.getByTestId("directory-browser-show-hidden").click();
 
@@ -127,6 +150,7 @@ test.describe("Directory browser hidden folders", () => {
     // The reveal re-lists the directory the user is already in, so the ordinary
     // sibling is still there and nothing navigated away.
     await expect(entries.filter({ hasText: VISIBLE_DIRECTORY })).toHaveCount(1);
+    await settlePicker(picker);
     await prCapture.screenshot("directory-browser-hidden-on", { fullPage: false });
 
     await hiddenEntry.click();
