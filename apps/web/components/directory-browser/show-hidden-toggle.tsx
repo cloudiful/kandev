@@ -27,6 +27,7 @@ export function ShowHiddenToggle({ touchRows = false }: { touchRows?: boolean })
       className={cn(
         "flex shrink-0 cursor-pointer items-center gap-1.5 border-l border-border px-2",
         "text-[11px] whitespace-nowrap text-muted-foreground",
+        "max-md:min-h-12",
         "[@media(pointer:coarse)]:min-h-11",
         touchRows && "min-h-11",
       )}

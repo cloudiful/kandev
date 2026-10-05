@@ -88,16 +88,17 @@ introduced. The existing `os.Root` handling, path resolution, parent
 computation, and the `os.Root`-based read are untouched, so the CodeQL
 path-injection sanitizer and the volume-root containment reasoning still hold.
 
-Sorting stays case-fold alphabetical. Because `.` sorts before alphanumerics,
-revealed entries lead the list; this is the existing comparator, not a new rule,
-and ordinary entries keep their relative order (AC-WORKSPACES-HIDDEN-FOLDERS-001.6).
+Sorting stays case-fold alphabetical. Dot-prefixed names sort before
+alphanumeric names, but other punctuation can sort earlier. Ordinary entries
+keep their relative order (AC-WORKSPACES-HIDDEN-FOLDERS-001.6).
 
 The new-folder action already accepts a dot-prefixed name. `validateLocalRepositoryName`
 rejects only the empty name, `.`, `..`, separators, and NUL, so no name
 validation changes are required for AC-WORKSPACES-HIDDEN-FOLDERS-001.7.
 
-Callers are the list-dir handler, and `CreateDirectory` for its returned
-listing. No other service call site changes.
+The list-dir handler and `CreateDirectory` call `ListDirectory`. The
+create-directory endpoint does not accept the visibility input. Its returned
+listing is for the new, empty directory.
 
 ## Shared visibility state
 
@@ -105,26 +106,27 @@ One persisted UI preference owns the flag. It is read by the shared listing
 hook and written by the shared control, so the three consumers cannot disagree.
 
 - Field: `directoryBrowserShowHidden` on the existing persisted UI slice.
-- Storage: a `getStoredDirectoryBrowserShowHidden` / `setStoredDirectoryBrowserShowHidden`
-  pair beside the other UI preferences in the shared local-storage helper,
-  following the existing helper and key-prefix convention.
+- Storage: `loadDirectoryBrowserShowHidden` reads the namespaced key through
+  `getLocalStorage`. The UI-slice action writes it through `setLocalStorage`.
 - Default: `false`.
 
 The API client gains an options argument that appends `include_hidden=true` only
 when the preference is active, so the default request URL is unchanged.
 
-The shared `useDirectoryListing` hook depends on the preference. A change
-re-runs the load for the path currently listed, which is what produces
-AC-WORKSPACES-HIDDEN-FOLDERS-001.3 without the control needing to know anything
-about listings.
+The shared `useDirectoryListing` hook observes the preference. A change
+refreshes the path currently listed and keeps the last successful listing while
+the request is pending. This keeps the displayed path selectable and preserves
+the new-folder draft. Navigation still clears the listing before it loads a new
+path.
 
 ## Directory browser UI
 
-The control renders inside the shared browser body, so the repo-less starting
-folder, the folder workspace source row, and the new-repository parent browser
-all receive it without changes to their own markup. The desktop webview returns
-the native trigger before rendering the browser body, so it never shows the
-control and never issues a list request (AC-WORKSPACES-HIDDEN-FOLDERS-001.12).
+The control renders inside the shared browser body. The web app's repo-less
+starting folder, workspace-source row, and new-repository parent browser all
+receive it. In Tauri, the repo-less and workspace-source folder pickers use the
+native trigger, so they show no control and send no list request. The
+new-repository browser remains an in-app browser
+(AC-WORKSPACES-HIDDEN-FOLDERS-001.12).
 
 Structure:
 
@@ -137,12 +139,13 @@ Structure:
   `aria-checked`, so the label stays one short stable noun instead of a
   Show/Hide verb pair. `ConfigurationChatToggle` is the shipped precedent for a
   labelled boolean in this codebase.
-- The switch sits inside a `<label>` that carries the trailing-edge slot, so the
-  whole band is the tap target rather than the 14px switch alone, and the
-  coarse-pointer minimum applies to the band.
-- Toggling does not move the displayed path, and the entry list keeps its
-  scroll owner. A reveal re-lists rather than merging into the current list, so
-  entry keys stay unique.
+- The switch sits inside a `<label>` that carries the trailing-edge slot. The
+  whole band is the target, rather than the 14px switch alone. The band has a
+  44px minimum at phone widths and for coarse pointers.
+- Toggling does not move the displayed path or change whether the current
+  directory can be selected. The refresh replaces the listing when it succeeds.
+  Navigation still clears the previous listing, so a stale directory cannot be
+  selected after a failed navigation request.
 - The toolbar row, when the consumer offers folder creation, keeps its existing
   layout. The new-folder form is unaffected.
 
@@ -152,7 +155,7 @@ The plan and both UI work orders carry the same `UI-01` and `UI-02` labels.
 
 ## Accessibility and phone composition
 
-- The control is a real button in tab order with a visible focus ring, matching
+- The control is a real switch button in Tab order with a visible focus ring, matching
   the surrounding row controls.
 - The accessible name is the localized noun and never changes; the state is
   announced separately by `aria-checked`.
@@ -207,9 +210,9 @@ flag is not a filesystem target and does not become a log label.
   under the reveal, the sort position of revealed entries, the
   `create-dir` response parity, and the handler's parameter parsing.
 - Frontend unit tests cover the default request URL, the revealed request URL,
-  the re-list on toggle, preference persistence across remount, the native
-  path rendering no control, and the phone touch target.
-- One Playwright spec covers a user revealing a hidden directory and selecting
-  it through a real directory browser.
+  the re-list on toggle, refresh-state preservation, preference persistence,
+  the native path with no control, and the phone target.
+- Desktop and mobile Playwright specs cover visibility, selection, Tab access,
+  the narrow fine-pointer target, and the coarse-pointer target.
 - Repository checks cover `gofmt`, the Go lint budget, web typecheck, web lint,
   and the i18n completeness and new-code ratchet.

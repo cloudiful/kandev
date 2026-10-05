@@ -57,6 +57,20 @@ async function openFolderSourceDialog(page: Page, taskId: string) {
   return dialog;
 }
 
+async function openNarrowFolderSourceDrawer(page: Page, taskId: string) {
+  await page.goto(`/t/${taskId}`);
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  const entryPoint = page.getByTestId("files-workspace-actions");
+  await expect(entryPoint).toBeVisible();
+  await entryPoint.click();
+  await page.getByRole("menuitem", { name: "Add Repositories to workspace" }).click();
+  const drawer = page.getByTestId("add-workspace-sources-drawer");
+  await expect(drawer).toBeVisible();
+  await drawer.getByRole("button", { name: "Add folder" }).click();
+  await expect(drawer.getByTestId("workspace-source-row")).toBeVisible();
+  return drawer;
+}
+
 test.describe("Directory browser hidden folders", () => {
   test.beforeEach(async ({ testPage }) => {
     await mockFolderAvailability(testPage, true);
@@ -86,6 +100,11 @@ test.describe("Directory browser hidden folders", () => {
         executor_profile_id: seedData.worktreeExecutorProfileId,
       },
     );
+    await expect
+      .poll(async () => (await apiClient.getTask(task.id)).primary_executor_type, {
+        timeout: 30_000,
+      })
+      .toBeTruthy();
 
     await openFolderSourceDialog(testPage, task.id);
     const picker = await openFolderRowPicker(testPage);
@@ -123,6 +142,11 @@ test.describe("Directory browser hidden folders", () => {
         executor_profile_id: seedData.worktreeExecutorProfileId,
       },
     );
+    await expect
+      .poll(async () => (await apiClient.getTask(task.id)).primary_executor_type, {
+        timeout: 30_000,
+      })
+      .toBeTruthy();
 
     await openFolderSourceDialog(testPage, task.id);
     const picker = await openFolderRowPicker(testPage);
@@ -200,15 +224,36 @@ test.describe("Directory browser hidden folders", () => {
         executor_profile_id: seedData.worktreeExecutorProfileId,
       },
     );
+    await expect
+      .poll(async () => (await apiClient.getTask(task.id)).primary_executor_type, {
+        timeout: 30_000,
+      })
+      .toBeTruthy();
 
-    await openFolderSourceDialog(testPage, task.id);
-    const picker = await openFolderRowPicker(testPage);
+    const dialog = await openFolderSourceDialog(testPage, task.id);
+    const folderPickerTrigger = dialog.getByTestId("folder-picker-trigger").last();
+    const addFolderButton = dialog.getByRole("button", { name: "Add folder" });
+    await expect(addFolderButton).toBeFocused();
+    for (let tabCount = 0; tabCount < 8; tabCount += 1) {
+      if (await folderPickerTrigger.evaluate((element) => element === document.activeElement))
+        break;
+      await testPage.keyboard.press("Tab");
+    }
+    await expect(folderPickerTrigger).toBeFocused();
+    await folderPickerTrigger.press("Enter");
+    const picker = testPage
+      .locator('[data-testid="folder-picker-popover"][data-state="open"]')
+      .last();
+    await expect(picker).toBeVisible();
     const control = picker.getByRole("switch", { name: "Hidden folders" });
 
     // A real control, reachable by keyboard, naming the thing it controls and
     // reporting its state to assistive technology.
     await expect(control).toHaveRole("switch");
-    await control.focus();
+    for (let tabCount = 0; tabCount < 8; tabCount += 1) {
+      if (await control.evaluate((element) => element === document.activeElement)) break;
+      await testPage.keyboard.press("Tab");
+    }
     await expect(control).toBeFocused();
     // Operable without a pointer.
     await control.press("Enter");
@@ -217,5 +262,57 @@ test.describe("Directory browser hidden folders", () => {
     // The fine-pointer composition keeps the compact control; the coarse-pointer
     // minimum belongs to the mobile project.
     expect(await controlHeight(control)).toBeLessThan(TOUCH_TARGET_PX);
+  });
+
+  // @covers AC-WORKSPACES-HIDDEN-FOLDERS-001.10
+  test("keeps a 44px target at narrow width with a fine pointer", async ({
+    testPage,
+    apiClient,
+    seedData,
+    backend,
+  }) => {
+    test.setTimeout(120_000);
+    await testPage.setViewportSize({ width: 390, height: 844 });
+    expect(await testPage.evaluate(() => window.matchMedia("(pointer: fine)").matches)).toBe(true);
+    createBrowsableDirectories(backend);
+    const task = await apiClient.createTaskWithAgent(
+      seedData.workspaceId,
+      "Reveal control fits a narrow fine-pointer view",
+      seedData.agentProfileId,
+      {
+        description: "/e2e:simple-message",
+        workflow_id: seedData.workflowId,
+        workflow_step_id: seedData.startStepId,
+        repository_ids: [seedData.repositoryId],
+        executor_profile_id: seedData.worktreeExecutorProfileId,
+      },
+    );
+    await expect
+      .poll(async () => (await apiClient.getTask(task.id)).primary_executor_type, {
+        timeout: 30_000,
+      })
+      .toBeTruthy();
+
+    const drawer = await openNarrowFolderSourceDrawer(testPage, task.id);
+    await drawer.getByTestId("folder-picker-trigger").last().click();
+    const picker = testPage
+      .locator('[data-testid="folder-picker-popover"][data-state="open"]')
+      .last();
+    await expect(picker).toBeVisible();
+    const hitArea = picker.getByTestId("directory-browser-show-hidden");
+    const control = picker.getByRole("switch", { name: "Hidden folders" });
+    expect(await controlHeight(hitArea)).toBeGreaterThanOrEqual(TOUCH_TARGET_PX);
+
+    const box = await hitArea.boundingBox();
+    if (!box) throw new Error("hidden-folder control has no layout box");
+    const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    const centerIsHittable = await testPage.evaluate(({ x, y }) => {
+      const target = document.querySelector('[data-testid="directory-browser-show-hidden"]');
+      const hit = document.elementFromPoint(x, y);
+      return Boolean(target && hit && (target === hit || target.contains(hit)));
+    }, point);
+    expect(centerIsHittable).toBe(true);
+    await testPage.mouse.click(point.x, point.y);
+    await expect(control).toHaveAttribute("aria-checked", "true");
   });
 });

@@ -12,10 +12,9 @@ legacy_specs: []
 
 ## Overview
 
-Add a persisted **Show hidden** control to the shared directory browser, backed by
-an explicit `include_hidden` input on the HTTP directory-listing endpoint. Every
-existing consumer of that browser reaches hidden directories; the default
-listing does not change.
+Add a persisted **Hidden folders** switch to the shared in-app directory
+browser. The HTTP directory-listing endpoint accepts an explicit
+`include_hidden` input. The default listing does not change.
 
 ## Evidence and scope
 
@@ -40,7 +39,7 @@ directory, folder picker, chezmoi, and list-dir returned nothing on this topic.
 
 - [Requirements](../../specs/workspaces/requirements/hidden-folder-browsing.md),
   all twelve acceptance criteria.
-- The list-dir and create-dir visibility input, the shared browser control, the
+- The list-dir visibility input, the shared browser control, the
   persisted preference, localized copy, and focused unit, integration, and
   end-to-end coverage.
 
@@ -73,7 +72,8 @@ so one desktop view plus explicit phone notes cover the requirement.
 UI-01: Directory browser, reveal off (default) and on
 Entry point: folder chip in Create New Task (repo-less starting folder),
             "Add folder" workspace source row, Create new repository parent browser.
-State: server or browser client. The desktop webview never renders this view.
+State: the browser sends requests to the Kandev host. The native folder picker
+does not render this control; the new-repository browser stays in-app.
 
 ┌──────────────────────────────────────────────────────────────┐
 │ Folders                                        [ + New folder]│ ← toolbar (only when
@@ -162,8 +162,8 @@ other's implementation.
 - Task 01 proves the request contract with Go unit and handler tests.
 - Task 02 proves the control, the preference, and the copy with frontend unit
   tests plus the i18n checks.
-- Task 03 proves the user-visible outcome with one Playwright spec and confirms
-  the public documentation matches the shipped behavior.
+- Task 03 proves the user-visible outcome with desktop and mobile Playwright
+  specs and confirms the public documentation matches the shipped behavior.
 - The whole package runs `make fmt`, `make typecheck test lint` as scoped per
   work order.
 
@@ -173,18 +173,18 @@ other's implementation.
 | --- | --- |
 | Go listing and handler tests, full packages | pass |
 | `golangci-lint run ./internal/task/...` (Go 1.26.0, v2.9.0) | 0 issues |
-| Frontend targeted suites (4 files) | 82 passed |
+| Frontend targeted suites (4 files) | 88 passed |
 | Frontend representative mocked-store sample (3 files) | 64 passed |
 | `pnpm run typecheck` | clean |
 | `pnpm run lint` | clean |
 | `pnpm run i18n:check` and `pnpm run i18n:ratchet` | pass |
-| Playwright desktop spec | 3 passed |
-| Playwright mobile spec (Pixel 5) | 1 passed |
+| Playwright desktop spec | 4 passed |
+| Playwright mobile spec (Pixel 5) | 2 passed |
 | `list-docs.py validate` and `lint-spec-files.py --all` | pass |
 
 Not run: the complete web unit suite, which did not finish within 75 minutes in
 the implementation environment. It is not a work-order-specified check. The
-store-shape risk it would cover was reduced by typecheck, by the 82 targeted
+store-shape risk it would cover was reduced by typecheck, by the 88 targeted
 tests, and by the 64-test mocked-store sample; a 347-file sweep of tests that
 mock `useAppStore` should still run in CI, where a missing field degrades to the
 default `includeHidden: false` rather than failing.

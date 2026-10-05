@@ -23,9 +23,9 @@ system_design:
 ## Summary
 
 Turn the hard-coded hidden-entry exclusion into a caller-supplied visibility
-decision. `GET /api/v1/fs/list-dir` accepts `include_hidden`, and
-`POST /api/v1/fs/create-dir` accepts the same field in its body so the listing it
-returns matches the caller's visibility. The default stays exactly as it is.
+decision. `GET /api/v1/fs/list-dir` accepts `include_hidden`. Directory creation
+keeps its existing request and response contract. The default listing stays
+unchanged.
 
 ## Scope
 
@@ -53,8 +53,9 @@ returns matches the caller's visibility. The default stays exactly as it is.
 1. A request without `include_hidden`, or with any value other than `true`,
    returns a listing with no hidden entry, matching the current contract.
 2. A request with `include_hidden=true` returns hidden directories in the same
-   listing, sorted before ordinary entries by the existing case-fold comparator,
-   with ordinary entries in unchanged relative order and no file entries.
+   listing. The existing comparator can place punctuation-prefixed names before
+   dot-prefixed names. Ordinary entries keep their relative order, and files
+   remain excluded.
 3. A dot-prefixed folder created through `create-dir` is accepted, is enterable,
    and appears in its parent's listing when the reveal is active.
 
@@ -64,7 +65,7 @@ returns matches the caller's visibility. The default stays exactly as it is.
 cd apps/backend
 gofmt -l internal/task/service internal/task/handlers
 go test ./internal/task/service/ -run 'TestListDirectory|TestCreateDirectory' -count=1
-go test ./internal/task/handlers/ -run 'TestRepositoryHandlers' -count=1
+go test ./internal/task/handlers/ -run 'TestHTTP(ListDirectoryHiddenEntryVisibilityFollowsRequestValue|ListDirectoryFailureIsIdenticalWithAndWithoutTheReveal|CreateDirectoryDotPrefixedChildIsEnterableAndRevealable)' -count=1
 make lint
 ```
 
@@ -75,6 +76,7 @@ make lint
 - `apps/backend/internal/task/service/directory_listing_windows_test.go`
 - `apps/backend/internal/task/handlers/repository_handlers.go`
 - `apps/backend/internal/task/handlers/repository_handlers_test.go`
+- `apps/backend/internal/task/handlers/repository_handlers_hidden_folders_test.go`
 
 ## Dependencies and risks
 
@@ -106,6 +108,7 @@ default-contract cases passed, documenting the unchanged behavior.
 
 Changed files: `directory_listing.go`, `repository_handlers.go`,
 `directory_listing_test.go`, `repository_handlers_test.go`,
+`repository_handlers_hidden_folders_test.go`,
 `directory_listing_windows_test.go` (call-site updates only).
 
 Verification:

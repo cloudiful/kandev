@@ -227,13 +227,13 @@ export function useDirectoryListing(open: boolean, value: string) {
   const listedVisibility = useRef<boolean | null>(null);
 
   const load = useCallback(
-    async (path: string) => {
+    async (path: string, { preserveListing = false }: { preserveListing?: boolean } = {}) => {
       const generation = ++requestGeneration.current;
       browsedPath.current = path;
       listedVisibility.current = showHiddenRef.current;
       setLoading(true);
       setError(null);
-      setListing(null);
+      if (!preserveListing) setListing(null);
       try {
         const nextListing = await listDirectory(path, { includeHidden: showHiddenRef.current });
         if (generation !== requestGeneration.current) return;
@@ -270,10 +270,11 @@ export function useDirectoryListing(open: boolean, value: string) {
   useEffect(() => {
     // A display-only preference change re-lists the directory already on screen
     // instead of the chosen one. The visibility guard keeps the first load from
-    // firing a second identical request.
+    // firing a second identical request. Keep the current listing while it
+    // refreshes so the path remains selectable and keyed toolbar state survives.
     if (!open || browsedPath.current === null) return;
     if (listedVisibility.current === showHidden) return;
-    void load(browsedPath.current);
+    void load(browsedPath.current, { preserveListing: true });
   }, [open, showHidden, load]);
 
   return { listing, loading, error, load };

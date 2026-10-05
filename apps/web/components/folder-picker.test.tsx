@@ -38,13 +38,18 @@ const mockedListDirectory = vi.mocked(listDirectory);
 const BUTTON_ROLE = "button";
 const TRIGGER_TEST_ID = "folder-picker-trigger";
 const SHOW_HIDDEN_TEST_ID = "directory-browser-show-hidden";
+const CHOOSE_BUTTON_TEST_ID = "folder-picker-choose";
 const SWITCH_ROLE = "switch";
 const HIDDEN_FOLDERS_NAME = "Hidden folders";
+const HOME_USER = "example";
+const HOME_BREADCRUMB_NAME = HOME_USER;
+const PROJECTS_NAME = "projects";
 const VIRTUAL_ROOT = "/";
 const DRIVE_E_ROOT = "E:\\";
 const SUCCESS_PATH = "E:\\Success";
 const SUCCESS_NAME = "Success";
-const HOME = "/home/example";
+const HOME = `/home/${HOME_USER}`;
+const SELECTED_PATH = `/Users/${HOME_USER}/Code`;
 
 afterEach(() => {
   cleanup();
@@ -63,7 +68,7 @@ describe("FolderPicker hidden-entry reveal", () => {
   // @covers AC-WORKSPACES-HIDDEN-FOLDERS-001.1, AC-WORKSPACES-HIDDEN-FOLDERS-001.2
   it("offers the reveal control inactive and asks for the current listing first", async () => {
     mockedListDirectory.mockResolvedValue(
-      listing(HOME, true, [{ name: "projects", path: `${HOME}/projects` }]),
+      listing(HOME, true, [{ name: PROJECTS_NAME, path: `${HOME}/${PROJECTS_NAME}` }]),
     );
 
     renderPicker(<FolderPicker value="" onChange={vi.fn()} />);
@@ -82,11 +87,13 @@ describe("FolderPicker hidden-entry reveal", () => {
   // @covers AC-WORKSPACES-HIDDEN-FOLDERS-001.3
   it("re-lists the same path with the reveal on and shows the hidden entry", async () => {
     mockedListDirectory
-      .mockResolvedValueOnce(listing(HOME, true, [{ name: "projects", path: `${HOME}/projects` }]))
+      .mockResolvedValueOnce(
+        listing(HOME, true, [{ name: PROJECTS_NAME, path: `${HOME}/${PROJECTS_NAME}` }]),
+      )
       .mockResolvedValueOnce(
         listing(HOME, true, [
           { name: ".minimax", path: `${HOME}/.minimax` },
-          { name: "projects", path: `${HOME}/projects` },
+          { name: PROJECTS_NAME, path: `${HOME}/${PROJECTS_NAME}` },
         ]),
       );
 
@@ -107,16 +114,16 @@ describe("FolderPicker hidden-entry reveal", () => {
     // Browsing does not commit a value, so the toggle must re-list wherever the
     // user currently is. Falling back to the chosen path would throw away their
     // position for a display-only preference.
-    const childPath = `${HOME}/projects`;
+    const childPath = `${HOME}/${PROJECTS_NAME}`;
     const childEntries = [{ name: ".minimax", path: `${childPath}/.minimax` }];
     mockedListDirectory
-      .mockResolvedValueOnce(listing(HOME, true, [{ name: "projects", path: childPath }]))
+      .mockResolvedValueOnce(listing(HOME, true, [{ name: PROJECTS_NAME, path: childPath }]))
       .mockResolvedValueOnce(listing(childPath, true, childEntries))
       .mockResolvedValue(listing(childPath, true, childEntries));
 
     renderPicker(<FolderPicker value="" onChange={vi.fn()} />);
     fireEvent.click(screen.getByTestId(TRIGGER_TEST_ID));
-    fireEvent.click(await screen.findByRole(BUTTON_ROLE, { name: "projects" }));
+    fireEvent.click(await screen.findByRole(BUTTON_ROLE, { name: PROJECTS_NAME }));
     await waitFor(() =>
       expect(mockedListDirectory).toHaveBeenLastCalledWith(childPath, { includeHidden: false }),
     );
@@ -126,7 +133,7 @@ describe("FolderPicker hidden-entry reveal", () => {
     await screen.findByRole(BUTTON_ROLE, { name: ".minimax" });
     expect(mockedListDirectory).toHaveBeenLastCalledWith(childPath, { includeHidden: true });
     // The user is still inside the directory they descended into.
-    expect(await screen.findByRole(BUTTON_ROLE, { name: "projects" })).toBeTruthy();
+    expect(await screen.findByRole(BUTTON_ROLE, { name: PROJECTS_NAME })).toBeTruthy();
   });
 
   // @covers AC-WORKSPACES-HIDDEN-FOLDERS-001.5
@@ -179,6 +186,63 @@ describe("FolderPicker hidden-entry reveal", () => {
   });
 });
 
+describe("FolderPicker visibility refresh", () => {
+  it("keeps the current path selectable while a visibility refresh is pending", async () => {
+    const refresh = deferred<DirectoryListing>();
+    mockedListDirectory.mockResolvedValue(
+      listing(HOME, true, [{ name: PROJECTS_NAME, path: `${HOME}/${PROJECTS_NAME}` }]),
+    );
+
+    renderPicker(<FolderPicker value="" onChange={vi.fn()} />);
+    fireEvent.click(screen.getByTestId(TRIGGER_TEST_ID));
+    await screen.findByRole(BUTTON_ROLE, { name: PROJECTS_NAME });
+    mockedListDirectory.mockImplementation((_path, options) =>
+      options?.includeHidden ? refresh.promise : Promise.resolve(listing(HOME, true)),
+    );
+
+    fireEvent.click(await screen.findByTestId(SHOW_HIDDEN_TEST_ID));
+    await waitFor(() =>
+      expect(mockedListDirectory).toHaveBeenCalledWith("", { includeHidden: true }),
+    );
+
+    expect(
+      screen.getByRole(BUTTON_ROLE, { name: new RegExp(`^${HOME_BREADCRUMB_NAME}$`) }),
+    ).toBeTruthy();
+    expect(screen.getByTestId(CHOOSE_BUTTON_TEST_ID).hasAttribute("disabled")).toBe(false);
+
+    await act(async () => refresh.resolve(listing(HOME, true)));
+    expect(screen.getByTestId(CHOOSE_BUTTON_TEST_ID).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("keeps the current path selectable when a visibility refresh fails", async () => {
+    mockedListDirectory.mockResolvedValue(
+      listing(HOME, true, [{ name: PROJECTS_NAME, path: `${HOME}/${PROJECTS_NAME}` }]),
+    );
+
+    renderPicker(<FolderPicker value="" onChange={vi.fn()} />);
+    fireEvent.click(screen.getByTestId(TRIGGER_TEST_ID));
+    await screen.findByRole(BUTTON_ROLE, { name: PROJECTS_NAME });
+    mockedListDirectory.mockImplementation((_path, options) =>
+      options?.includeHidden
+        ? Promise.reject(new Error("refresh failed"))
+        : Promise.resolve(
+            listing(HOME, true, [{ name: PROJECTS_NAME, path: `${HOME}/${PROJECTS_NAME}` }]),
+          ),
+    );
+
+    fireEvent.click(await screen.findByTestId(SHOW_HIDDEN_TEST_ID));
+    await waitFor(() =>
+      expect(mockedListDirectory).toHaveBeenCalledWith("", { includeHidden: true }),
+    );
+
+    await screen.findByTestId("folder-picker-error");
+    expect(
+      screen.getByRole(BUTTON_ROLE, { name: new RegExp(`^${HOME_BREADCRUMB_NAME}$`) }),
+    ).toBeTruthy();
+    expect(screen.getByTestId(CHOOSE_BUTTON_TEST_ID).hasAttribute("disabled")).toBe(false);
+  });
+});
+
 describe("FolderPicker trigger", () => {
   it("preserves the separator when displaying the POSIX root", () => {
     renderPicker(<FolderPicker value="/" onChange={vi.fn()} placeholder="Pick a folder" />);
@@ -193,7 +257,7 @@ describe("FolderPicker trigger", () => {
   });
 
   it("uses the native picker in a Tauri WebView without listing directories over HTTP", async () => {
-    const invoke = vi.fn(async () => ({ status: "selected", path: "/Users/example/Code" }));
+    const invoke = vi.fn(async () => ({ status: "selected", path: SELECTED_PATH }));
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
       value: { invoke },
@@ -207,7 +271,7 @@ describe("FolderPicker trigger", () => {
     renderPicker(<FolderPicker value="" onChange={onChange} />);
     fireEvent.click(screen.getByTestId(TRIGGER_TEST_ID));
 
-    await waitFor(() => expect(onChange).toHaveBeenCalledWith("/Users/example/Code"));
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(SELECTED_PATH));
     expect(invoke).toHaveBeenCalledWith("pick_directory", undefined);
     expect(mockedListDirectory).not.toHaveBeenCalled();
     expect(screen.queryByTestId("folder-picker-popover")).toBeNull();
@@ -247,7 +311,7 @@ describe("FolderPicker navigation", () => {
 
     await screen.findByTestId("folder-picker-error");
     await waitFor(() =>
-      expect(screen.getByTestId("folder-picker-choose").hasAttribute("disabled")).toBe(true),
+      expect(screen.getByTestId(CHOOSE_BUTTON_TEST_ID).hasAttribute("disabled")).toBe(true),
     );
     expect(screen.queryByRole(BUTTON_ROLE, { name: "C:\\" })).toBeNull();
   });
@@ -303,7 +367,7 @@ describe("FolderPicker navigation", () => {
     await act(async () => oldLoad.reject(new Error("stale failure")));
     expect(screen.queryByTestId("folder-picker-error")).toBeNull();
     expect(screen.getByRole(BUTTON_ROLE, { name: SUCCESS_NAME })).toBeTruthy();
-    expect(screen.getByTestId("folder-picker-choose").hasAttribute("disabled")).toBe(false);
+    expect(screen.getByTestId(CHOOSE_BUTTON_TEST_ID).hasAttribute("disabled")).toBe(false);
   });
 });
 

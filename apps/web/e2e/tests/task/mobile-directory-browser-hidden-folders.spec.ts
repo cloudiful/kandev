@@ -61,6 +61,11 @@ test("coarse pointer grows the reveal control and keeps the reveal usable by tou
       executor_profile_id: seedData.worktreeExecutorProfileId,
     },
   );
+  await expect
+    .poll(async () => (await apiClient.getTask(task.id)).primary_executor_type, {
+      timeout: 30_000,
+    })
+    .toBeTruthy();
 
   await testPage.goto(`/t/${task.id}`);
   // On a phone the Files surface is a drawer opened from its own button, and the
@@ -127,6 +132,11 @@ test("a breadcrumb too long to fit keeps the reveal control inside the popover",
       executor_profile_id: seedData.worktreeExecutorProfileId,
     },
   );
+  await expect
+    .poll(async () => (await apiClient.getTask(task.id)).primary_executor_type, {
+      timeout: 30_000,
+    })
+    .toBeTruthy();
 
   await testPage.goto(`/t/${task.id}`);
   await testPage.getByRole("button", { name: "Files", exact: true }).tap();

@@ -58,15 +58,15 @@ capability without a new prop and without owning state.
 
 1. With the preference off, the list request URL is byte-identical to today's,
    and the browser renders no hidden entry. With it on, the request carries
-   `include_hidden=true`, the control reports a pressed state, and toggling
-   re-lists the same path without moving the breadcrumb or the footer.
+   `include_hidden=true`, and the switch reports its state with `aria-checked`.
+   A visibility refresh keeps the breadcrumb, folder selection, and any new-folder
+   draft in place while it loads.
 2. The preference survives closing and reopening a browser and a page reload,
    and every directory browser reflects the same value.
-3. The control is a keyboard-reachable button whose localized action label is its
-   accessible name and changes with state, keeps the pinned trailing-edge slot in the desktop
-   composition, and meets the existing coarse-pointer touch target in the phone
-   composition. The desktop webview renders no control and issues no list
-   request.
+3. The control is a keyboard-reachable switch with the stable localized name
+   `Hidden folders` and `aria-checked`. It keeps the pinned trailing-edge slot on
+   desktop and has a 44px target at phone widths and for coarse pointers. The
+   Tauri native-picker path renders no control and issues no list request.
 
 ## Verification commands
 
@@ -102,10 +102,6 @@ pnpm run i18n:ratchet
 
 ## Results
 
-Not started.
-
-## Results
-
 Done.
 
 RED was observed before each production change: the fs-api reveal cases failed
@@ -134,26 +130,23 @@ pseudo, zh-cn, zh-hk, zh-tw. The Chinese "hide" value was changed to
 The control was extracted into its own module because `folder-picker.tsx` had
 crossed the 600-line lint budget.
 
-Code review then found a real accessibility defect: the control combined a label
-that changes with state ("Show hidden folders" / "Hide hidden folders") with
-`aria-pressed`, so a pressed state announced alongside a name that still says
-"hide" is a contradiction. The shipped precedent in
-`needs-you-inbox-hidden-panel.tsx` uses the same action-label pair without
-`aria-pressed`, so `aria-pressed` was removed and the changing localized label
-becomes the state announcement. The system design, the requirements wording, and
-the plan preview were corrected to match.
+Code review identified an accessibility contract issue. A changing action name
+and `aria-pressed` can announce conflicting states. The control now uses the
+stable localized name "Hidden folders" and reports its state with
+`aria-checked`, which gives keyboard and screen-reader users the same switch
+contract at every state.
 
 Review also added the missing coverage for AC-WORKSPACES-HIDDEN-FOLDERS-001.4:
 `create-local-repository-surface.test.tsx` now asserts the third directory
 browser exposes the control and re-lists with the shared preference.
 
-`pnpm run test` for the four targeted files is now 83 passed.
+`pnpm run test` for the four targeted files is now 88 passed.
 
 Verification:
 
 | Command | Result |
 | --- | --- |
-| `pnpm run test components/folder-picker.test.tsx components/create-local-repository-surface.test.tsx lib/api/domains/fs-api.test.ts lib/state/slices/ui/ui-slice.test.ts` | 82 passed (4 files) |
+| `pnpm run test components/folder-picker.test.tsx components/create-local-repository-surface.test.tsx lib/api/domains/fs-api.test.ts lib/state/slices/ui/ui-slice.test.ts` | 88 passed (4 files) |
 | `pnpm run typecheck` | clean |
 | `pnpm run lint` | clean, 0 warnings |
 | `pnpm run i18n:check` | keys OK, 6 locales complete, pseudo in sync, no em dashes, no non-JSX copy |

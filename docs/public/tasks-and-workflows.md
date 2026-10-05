@@ -177,11 +177,11 @@ Use **New Task** in the sidebar. In an open task, the **Task** split button also
    | **Remote** | A remote repository                               | Search GitHub, GitLab, or Azure DevOps, or paste a supported URL. Public GitHub reads and public `gitlab.com` branch discovery work without credentials. Private access and authenticated browse/write actions require provider credentials. |
    | **None**   | Planning, research, or work outside Git           | Use a scratch workspace or an optional folder on the Kandev host. Git worktree and repository-aware Changes, branch, and pull-request features are unavailable.                                                                              |
 
-   Every folder browser in Kandev lists directories on the machine running
-   Kandev and hides entries whose name starts with a dot, such as `.config` or
-   `.local`. Use the **Show hidden folders** control beside the path to include
-   them, then pick the directory as usual. The control is off by default, applies
-   to every folder browser, and remembers your choice in that browser.
+   In-app directory browsers list directories on the Kandev host. By default,
+   they hide names that start with a dot, such as `.config` or `.local`. Select
+   **Hidden folders** beside the path to show them. The switch is off by default,
+   and Kandev remembers your choice across in-app browsers. The desktop app's
+   native folder picker uses the operating system's control for hidden entries.
 
 4. **Choose an executor and agent profile.** Both profiles must be compatible. A workflow default agent profile locks the task-level selector.
 5. **Add a description when needed.** Use the eye button beside **Enhance prompt with AI** to preview a step's prompt template. The preview does not resolve task IDs or saved-prompt references until the task exists.

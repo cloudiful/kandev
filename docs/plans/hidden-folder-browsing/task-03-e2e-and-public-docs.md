@@ -29,9 +29,10 @@ in the product but not find in the docs is still a gap.
 
 ## Scope
 
-- One Playwright spec that opens a real directory browser, activates the
+- A desktop Playwright spec that opens a real directory browser, activates the
   control, sees a hidden entry, enters it, and selects it.
-- The same spec at a phone viewport for the touch target and the pinned slot.
+- A separate mobile Playwright spec for the coarse-pointer target and pinned
+  slot, plus narrow fine-pointer coverage in the desktop spec.
 - A public documentation update for the control, in the page that already
   documents the browser folder picker and the repo-less starting folder.
 - Confirmation that the spec asserts the default-off listing too, so the
@@ -40,7 +41,8 @@ in the product but not find in the docs is still a gap.
 ## Exclusions
 
 - No new test project and no change to the E2E shard budget.
-- No documentation for the native picker, symlinks, or tilde handling.
+- No detailed native-picker instructions, symlink browsing, or tilde handling.
+  Public docs state that the native picker uses the operating system's control.
 - No production or test code change unless a failure here proves a defect, which
   is reported rather than absorbed.
 
@@ -51,15 +53,15 @@ in the product but not find in the docs is still a gap.
    path is the hidden directory's canonical path.
 2. The phone-width spec shows the control meeting the coarse-pointer target and
    remaining in the pinned slot while the breadcrumb scrolls.
-3. The public documentation states the control's existence, its default, and
-   that it applies to every directory browser, without documenting an excluded
-   behavior as if it shipped.
+3. The public documentation states the control's existence and default for
+   in-app directory browsers. It names the native-picker exception.
 
 ## Verification commands
 
 ```bash
 cd apps/web
-pnpm e2e:run e2e/tests/task/folder-browser-hidden-folders.spec.ts
+pnpm e2e:run e2e/tests/task/directory-browser-hidden-folders.spec.ts
+pnpm e2e:run --project mobile-chrome e2e/tests/task/mobile-directory-browser-hidden-folders.spec.ts
 pnpm run i18n:check
 cd ../..
 python3 scripts/list-docs.py validate
@@ -68,8 +70,9 @@ python3 scripts/lint-spec-files.py --all
 
 ## Likely files
 
-- `apps/web/e2e/tests/task/folder-browser-hidden-folders.spec.ts`
-- `apps/web/e2e/tests/task/add-workspace-sources.spec.ts` for the existing
+- `apps/web/e2e/tests/task/directory-browser-hidden-folders.spec.ts`
+- `apps/web/e2e/tests/task/mobile-directory-browser-hidden-folders.spec.ts`
+- `apps/web/e2e/tests/task/mobile-add-workspace-sources.spec.ts` for the existing
   folder-picker journey helpers
 - `docs/public/desktop-app.md`, and the public task documentation that covers
   the repo-less starting folder
@@ -86,10 +89,6 @@ python3 scripts/lint-spec-files.py --all
 
 ## Results
 
-Not started.
-
-## Results
-
 Done.
 
 Two specs were written rather than one, because the `mobile-chrome` Playwright
@@ -100,7 +99,7 @@ Verification:
 
 | Command | Result |
 | --- | --- |
-| `pnpm e2e:run e2e/tests/task/directory-browser-hidden-folders.spec.ts` | 3 passed |
+| `pnpm e2e:run e2e/tests/task/directory-browser-hidden-folders.spec.ts` | 4 passed |
 | `pnpm e2e:run --project mobile-chrome e2e/tests/task/mobile-directory-browser-hidden-folders.spec.ts` | 2 passed (Pixel 5) |
 | `pnpm exec playwright install chromium` | installed the build this Playwright version expects (1228); the cached 1243 was not usable |
 | `pnpm run typecheck` | clean |
@@ -112,8 +111,12 @@ dialog. The navigation was corrected against the proven
 `mobile-add-workspace-sources` flow.
 
 The desktop specs assert the default-off listing, the reveal plus re-list, entry
-into the hidden directory, and keyboard operation with its accessible name. The
-mobile spec asserts the 44px coarse-pointer target and a touch-driven reveal.
+into the hidden directory, and sequential Tab access to the switch. A narrow
+fine-pointer case checks the 44px target and a center click. The mobile spec
+checks the coarse-pointer target and a touch-driven reveal.
+
+All six E2E cases wait for `primary_executor_type` before opening the picker.
+This prevents the Add folder action from racing task setup.
 
 Code review found that the plan's UI-01 claim, "the breadcrumb scrolls while the
 control stays fixed", was not proven by any test. A second phone case now walks
