@@ -340,6 +340,9 @@ export type UISliceState = {
   updateAvailableNotification: UpdateAvailableNotification | null;
   updateAvailableNotificationQueue: UpdateAvailableNotification[];
   bottomTerminal: BottomTerminalState;
+  /** Whether every directory browser reveals entries whose name begins with a
+   * dot. A stored user preference, off by default. */
+  directoryBrowserShowHidden: boolean;
   sidebarViews: SidebarSliceState;
   sidebarViewsByWorkspace: Record<string, SidebarSliceState>;
   threadViews: ThreadViewSliceState;
@@ -391,6 +394,7 @@ export type UISliceActions = {
   setPlanMode: (sessionId: string, enabled: boolean) => void;
   setCancelTurnPending: (sessionId: string, pending: boolean) => void;
   setTranscriptAutoScrollEnabled: (sessionId: string, enabled: boolean) => void;
+  setDirectoryBrowserShowHidden: (showHidden: boolean) => void;
   setTranscriptScrollTop: (sessionId: string, scrollTop: number) => void;
   setReviewPRSelection: (taskId: string, selectedKey: string) => void;
   setActiveDocument: (sessionId: string, doc: ActiveDocument | null) => void;

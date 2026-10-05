@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StateProvider } from "@/components/state-provider";
 import type { Repository } from "@/lib/types/http";
 
 const mocks = vi.hoisted(() => ({
@@ -63,7 +64,11 @@ function renderSurface(
     onCreated: vi.fn(),
     ...overrides,
   };
-  render(<CreateLocalRepositorySurface {...props} />);
+  render(
+    <StateProvider>
+      <CreateLocalRepositorySurface {...props} />
+    </StateProvider>,
+  );
   return props;
 }
 
@@ -182,6 +187,32 @@ describe("CreateLocalRepositorySurface", () => {
       );
     });
   });
+  // @covers AC-WORKSPACES-HIDDEN-FOLDERS-001.4
+  it("exposes the shared reveal control and re-lists this browser with it", async () => {
+    const hiddenListing = {
+      path: "/work",
+      parent: "/",
+      entries: [{ name: ".config", path: "/work/.config" }],
+      choosable: true,
+    };
+    mocks.listDirectory
+      .mockResolvedValueOnce({ ...hiddenListing, entries: [] })
+      .mockResolvedValue(hiddenListing);
+    renderSurface();
+
+    const control = await screen.findByRole("switch", { name: "Hidden folders" });
+    expect(control.getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(control);
+
+    // This browser asks the same shared preference the other directory browsers
+    // read, so a toggle anywhere in the application reaches this surface too.
+    await waitFor(() =>
+      expect(mocks.listDirectory).toHaveBeenLastCalledWith("", { includeHidden: true }),
+    );
+    await waitFor(() => expect(screen.getByText(".config")).toBeTruthy());
+    expect(await screen.findByRole("switch", { name: "Hidden folders" })).toBeTruthy();
+  });
 });
 
 describe("CreateLocalRepositorySurface async creation", () => {
@@ -201,13 +232,21 @@ describe("CreateLocalRepositorySurface async creation", () => {
       executorSelection: directLocalSelection,
       onCreated: previousHandler,
     };
-    const { rerender } = render(<CreateLocalRepositorySurface {...props} />);
+    const { rerender } = render(
+      <StateProvider>
+        <CreateLocalRepositorySurface {...props} />
+      </StateProvider>,
+    );
     fireEvent.change(await screen.findByLabelText(REPOSITORY_NAME_LABEL), {
       target: { value: REPOSITORY_NAME },
     });
     fireEvent.click(screen.getByRole("button", { name: CREATE_BUTTON_NAME }));
     await waitFor(() => expect(mocks.initialize).toHaveBeenCalledOnce());
-    rerender(<CreateLocalRepositorySurface {...props} onCreated={currentHandler} />);
+    rerender(
+      <StateProvider>
+        <CreateLocalRepositorySurface {...props} onCreated={currentHandler} />
+      </StateProvider>,
+    );
     complete(createdRepository);
     await waitFor(() => expect(previousHandler).toHaveBeenCalledWith(createdRepository));
     expect(currentHandler).not.toHaveBeenCalled();
@@ -250,9 +289,11 @@ describe("CreateLocalRepositorySurface submission", () => {
     };
 
     render(
-      <form onSubmit={parentSubmit}>
-        <CreateLocalRepositorySurface {...props} />
-      </form>,
+      <StateProvider>
+        <form onSubmit={parentSubmit}>
+          <CreateLocalRepositorySurface {...props} />
+        </form>
+      </StateProvider>,
     );
 
     fireEvent.change(await screen.findByLabelText(REPOSITORY_NAME_LABEL), {

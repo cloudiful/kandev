@@ -261,6 +261,7 @@ export type AppState = KanbanSlice & {
   updateAvailableNotification: (typeof defaultUIState)["updateAvailableNotification"];
   updateAvailableNotificationQueue: (typeof defaultUIState)["updateAvailableNotificationQueue"];
   bottomTerminal: (typeof defaultUIState)["bottomTerminal"];
+  directoryBrowserShowHidden: (typeof defaultUIState)["directoryBrowserShowHidden"];
   sidebarViews: (typeof defaultUIState)["sidebarViews"];
   sidebarViewsByWorkspace: (typeof defaultUIState)["sidebarViewsByWorkspace"];
   threadViews: (typeof defaultUIState)["threadViews"];
@@ -393,6 +394,7 @@ export type AppState = KanbanSlice & {
   setPlanMode: (sessionId: string, enabled: boolean) => void;
   setCancelTurnPending: UIA["setCancelTurnPending"];
   setTranscriptAutoScrollEnabled: UIA["setTranscriptAutoScrollEnabled"];
+  setDirectoryBrowserShowHidden: UIA["setDirectoryBrowserShowHidden"];
   setTranscriptScrollTop: UIA["setTranscriptScrollTop"];
   setReviewPRSelection: UIA["setReviewPRSelection"];
   setActiveDocument: (sessionId: string, doc: UISliceTypes.ActiveDocument | null) => void;
