@@ -74,7 +74,7 @@ func TestMaterializePassthroughFileOverwritesKandevOwnedTempFile(t *testing.T) {
 	path := filepath.Join(dir, "config.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{"stale":true}`), 0o600))
 
-	owned, err := mgr.materializePassthroughFile(&AgentExecution{ID: "exec-1"}, mcpconfig.PassthroughConfigFile{
+	owned, err := mgr.materializePassthroughFile(context.Background(), &AgentExecution{ID: "exec-1"}, mcpconfig.PassthroughConfigFile{
 		Path:    path,
 		Content: []byte(`{"mcpServers":{"kandev":{}}}`),
 	})
@@ -103,6 +103,7 @@ func TestMaterializePassthroughFileSkipsPathEscapingWorkspace(t *testing.T) {
 
 	target := filepath.Join(workspace, ".cursor", "mcp.json")
 	owned, err := mgr.materializePassthroughFile(
+		context.Background(),
 		&AgentExecution{ID: "exec-1", WorkspacePath: workspace},
 		mcpconfig.PassthroughConfigFile{Path: target, Content: []byte(`{"mcpServers":{}}`), MergeKey: "mcpServers"},
 	)
@@ -122,7 +123,7 @@ func TestMaterializePassthroughFileSurfacesUnreadableParent(t *testing.T) {
 	blocker := filepath.Join(dir, "blocker")
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
 
-	_, err := mgr.materializePassthroughFile(&AgentExecution{ID: "exec-1"}, mcpconfig.PassthroughConfigFile{
+	_, err := mgr.materializePassthroughFile(context.Background(), &AgentExecution{ID: "exec-1"}, mcpconfig.PassthroughConfigFile{
 		Path:    filepath.Join(blocker, "config.json"),
 		Content: []byte(`{}`),
 	})
@@ -134,7 +135,7 @@ func TestWritePassthroughMCPFilesSkipsEmptyPaths(t *testing.T) {
 	mgr := newTestManager(t)
 	execution := &AgentExecution{ID: "exec-1"}
 
-	require.NoError(t, mgr.writePassthroughMCPFiles(execution, []mcpconfig.PassthroughConfigFile{
+	require.NoError(t, mgr.writePassthroughMCPFiles(context.Background(), execution, []mcpconfig.PassthroughConfigFile{
 		{Path: "", Content: []byte(`{}`)},
 	}))
 
@@ -237,13 +238,54 @@ func TestPiProjectMCPUserFileSurvivesTeardown(t *testing.T) {
 	require.Empty(t, getPassthroughMCPClaims(execution))
 }
 
+func TestPiProjectMCPClaimsShareSymlinkedWorkspaceIdentity(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation is not reliably available on Windows CI")
+	}
+	manager := newTestManager(t)
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	workspaceAlias := filepath.Join(root, "workspace-alias")
+	path := filepath.Join(workspace, ".pi", "mcp.json")
+	aliasPath := filepath.Join(workspaceAlias, ".pi", "mcp.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.Symlink(workspace, workspaceAlias))
+
+	previous := &AgentExecution{ID: "previous", WorkspacePath: workspace, metadata: map[string]interface{}{}}
+	current := &AgentExecution{ID: "current", WorkspacePath: workspaceAlias, metadata: map[string]interface{}{}}
+	previousFile := mcpconfig.PassthroughConfigFile{
+		Path: path, MergeKey: "mcpServers",
+		Content: []byte(`{"mcpServers":{"kandev":{"url":"http://localhost:41006/mcp"}}}`),
+	}
+	currentFile := mcpconfig.PassthroughConfigFile{
+		Path: aliasPath, MergeKey: "mcpServers",
+		Content: []byte(`{"mcpServers":{"kandev":{"url":"http://localhost:41007/mcp"}}}`),
+	}
+
+	owned, err := manager.materializePassthroughFile(context.Background(), previous, previousFile)
+	require.NoError(t, err)
+	require.True(t, owned)
+	owned, err = manager.materializePassthroughFile(context.Background(), current, currentFile)
+	require.NoError(t, err)
+	require.True(t, owned, "a symlink alias must inherit the known generated file claim")
+
+	manager.cleanupPassthroughMCPConfig(previous)
+	content, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(content), "http://localhost:41007/mcp")
+
+	manager.cleanupPassthroughMCPConfig(current)
+	_, err = os.Stat(path)
+	require.ErrorIs(t, err, os.ErrNotExist, "the canonical resource must be removed after its final claim")
+}
+
 func TestMaterializePassthroughFileExistingMergeKeyDoesNotOwnUserFile(t *testing.T) {
 	mgr := newTestManager(t)
 	path := filepath.Join(t.TempDir(), "mcp.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{"mcpServers":{"user-server":{"command":"user-tool"}}}`), 0o600))
 	execution := &AgentExecution{ID: "user-file-execution", metadata: map[string]interface{}{}}
 
-	owned, err := mgr.materializePassthroughFile(execution, mcpconfig.PassthroughConfigFile{
+	owned, err := mgr.materializePassthroughFile(context.Background(), execution, mcpconfig.PassthroughConfigFile{
 		Path:     path,
 		Content:  []byte(`{"mcpServers":{"kandev":{"url":"http://localhost:41007/mcp"}}}`),
 		MergeKey: "mcpServers",

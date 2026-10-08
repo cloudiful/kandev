@@ -31,8 +31,12 @@ func openPassthroughMCPFileLock(path string) (*os.File, error) {
 	return file, nil
 }
 
-func lockPassthroughMCPFile(file *os.File) error {
-	return unix.Flock(int(file.Fd()), unix.LOCK_EX)
+func tryLockPassthroughMCPFile(file *os.File) (bool, error) {
+	err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+	if err == unix.EWOULDBLOCK || err == unix.EAGAIN {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func unlockPassthroughMCPFile(file *os.File) error {

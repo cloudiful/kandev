@@ -28,6 +28,9 @@ func passthroughMCPFingerprint(content []byte) string {
 }
 
 func passthroughMCPClaimPath(path string) string {
+	if identity, err := passthroughMCPFileLockIdentity(path); err == nil {
+		return identity
+	}
 	return filepath.Clean(path)
 }
 

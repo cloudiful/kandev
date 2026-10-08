@@ -1,11 +1,13 @@
 package lifecycle
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 const passthroughMCPFileLockDirectory = "kandev/passthrough-mcp-locks"
@@ -14,7 +16,10 @@ const passthroughMCPFileLockDirectory = "kandev/passthrough-mcp-locks"
 // backend processes. The lock lives in the current user's cache directory
 // rather than the workspace, so it cannot become user project configuration
 // or collide with another operating system user's backend.
-func acquirePassthroughMCPFileLock(path string) (*os.File, error) {
+func acquirePassthroughMCPFileLock(ctx context.Context, path string) (*os.File, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("lock passthrough MCP file: context is required")
+	}
 	lockPath, err := passthroughMCPFileLockPath(path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve passthrough MCP lock path: %w", err)
@@ -26,11 +31,33 @@ func acquirePassthroughMCPFileLock(path string) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open passthrough MCP lock: %w", err)
 	}
-	if err := lockPassthroughMCPFile(file); err != nil {
+	if err := lockPassthroughMCPFile(ctx, file); err != nil {
 		_ = file.Close()
 		return nil, fmt.Errorf("lock passthrough MCP file: %w", err)
 	}
 	return file, nil
+}
+
+func lockPassthroughMCPFile(ctx context.Context, file *os.File) error {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		locked, err := tryLockPassthroughMCPFile(file)
+		if err != nil {
+			return err
+		}
+		if locked {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func releasePassthroughMCPFileLock(file *os.File) error {

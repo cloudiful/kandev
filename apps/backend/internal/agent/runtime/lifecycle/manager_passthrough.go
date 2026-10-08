@@ -439,7 +439,7 @@ func (m *Manager) applyPassthroughMCPWithPreparation(
 	if err != nil {
 		return nil, fmt.Errorf("build passthrough MCP config: %w", err)
 	}
-	if err := m.writePassthroughMCPFiles(execution, artifacts.Files); err != nil {
+	if err := m.writePassthroughMCPFiles(ctx, execution, artifacts.Files); err != nil {
 		return nil, err
 	}
 	setPassthroughMCPEnv(execution, artifacts.Env)
@@ -500,13 +500,13 @@ func (m *Manager) passthroughMCPPaths(execution *AgentExecution) mcpconfig.Passt
 // a fingerprint claim for every file kandev owns. An existing MergeKey file is
 // owned only when its bytes match a known Kandev generation; otherwise it is a
 // user/unknown file and teardown leaves it alone.
-func (m *Manager) writePassthroughMCPFiles(execution *AgentExecution, files []mcpconfig.PassthroughConfigFile) error {
+func (m *Manager) writePassthroughMCPFiles(ctx context.Context, execution *AgentExecution, files []mcpconfig.PassthroughConfigFile) error {
 	written := getPassthroughMCPFiles(execution)
 	for _, f := range files {
 		if f.Path == "" {
 			continue
 		}
-		ok, err := m.materializePassthroughFile(execution, f)
+		ok, err := m.materializePassthroughFile(ctx, execution, f)
 		if err != nil {
 			return err
 		}
@@ -535,10 +535,8 @@ func (m *Manager) writePassthroughMCPFiles(execution *AgentExecution, files []mc
 // with O_EXCL. For an existing MergeKey file, Kandev preserves the user's
 // entries and records ownership only when the existing bytes match a known
 // Kandev generation.
-func (m *Manager) materializePassthroughFile(execution *AgentExecution, f mcpconfig.PassthroughConfigFile) (bool, error) {
-	m.passthroughMCPMu.Lock()
-	defer m.passthroughMCPMu.Unlock()
-	lockFile, err := acquirePassthroughMCPFileLock(f.Path)
+func (m *Manager) materializePassthroughFile(ctx context.Context, execution *AgentExecution, f mcpconfig.PassthroughConfigFile) (bool, error) {
+	lockFile, err := acquirePassthroughMCPFileLock(ctx, f.Path)
 	if err != nil {
 		return false, err
 	}
@@ -548,6 +546,8 @@ func (m *Manager) materializePassthroughFile(execution *AgentExecution, f mcpcon
 				zap.String("path", f.Path), zap.Error(releaseErr))
 		}
 	}()
+	m.passthroughMCPMu.Lock()
+	defer m.passthroughMCPMu.Unlock()
 	return m.materializePassthroughFileLocked(execution, f)
 }
 
@@ -725,25 +725,34 @@ func workspacePathEscapes(workspaceDir, path string) (bool, error) {
 }
 
 func (m *Manager) cleanupPassthroughMCPConfig(execution *AgentExecution) {
-	m.passthroughMCPMu.Lock()
-	defer m.passthroughMCPMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	m.cleanupPassthroughMCPConfigWithContext(ctx, execution)
+}
 
+func (m *Manager) cleanupPassthroughMCPConfigWithContext(ctx context.Context, execution *AgentExecution) {
 	for _, claim := range getPassthroughMCPClaims(execution) {
-		lockFile, err := acquirePassthroughMCPFileLock(claim.Path)
+		lockFile, err := acquirePassthroughMCPFileLock(ctx, claim.Path)
 		if err != nil {
 			m.logger.Warn("failed to acquire passthrough MCP file lock for cleanup",
 				zap.String("path", claim.Path), zap.Error(err))
+			m.passthroughMCPMu.Lock()
 			m.forgetPassthroughMCPClaimLocked(execution, claim.Path)
+			m.passthroughMCPMu.Unlock()
 			continue
 		}
+		m.passthroughMCPMu.Lock()
 		m.cleanupPassthroughMCPClaimLocked(execution, claim)
 		if err := releasePassthroughMCPFileLock(lockFile); err != nil {
 			m.logger.Warn("failed to release passthrough MCP file lock after cleanup",
 				zap.String("path", claim.Path), zap.Error(err))
 		}
 		m.forgetPassthroughMCPClaimLocked(execution, claim.Path)
+		m.passthroughMCPMu.Unlock()
 	}
-	execution.deleteMetadataValues(metadataKeyPassthroughMCPFiles, metadataKeyPassthroughMCPEnv)
+	if execution != nil {
+		execution.deleteMetadataValues(metadataKeyPassthroughMCPFiles, metadataKeyPassthroughMCPEnv)
+	}
 }
 
 func removePassthroughMCPFile(files []string, path string) []string {
