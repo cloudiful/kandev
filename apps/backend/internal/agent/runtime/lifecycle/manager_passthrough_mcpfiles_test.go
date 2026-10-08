@@ -1,9 +1,12 @@
 package lifecycle
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -139,6 +142,271 @@ func TestWritePassthroughMCPFilesSkipsEmptyPaths(t *testing.T) {
 		"a strategy entry with no path is skipped and never tracked")
 }
 
+func TestPiProjectMCPNewExecutionSurvivesPreviousCleanup(t *testing.T) {
+	mgr := newTestManager(t)
+	workspace := t.TempDir()
+	agentConfig, ok := mgr.registry.Get("pi-acp")
+	require.True(t, ok, "pi-acp agent missing from test registry")
+
+	oldExecution := &AgentExecution{
+		ID:             "old-execution",
+		TaskID:         "task-1",
+		SessionID:      "old-session",
+		AgentProfileID: "profile-1",
+		WorkspacePath:  workspace,
+		metadata:       map[string]interface{}{},
+		standalonePort: 41006,
+	}
+	newExecution := &AgentExecution{
+		ID:             "new-execution",
+		TaskID:         "task-1",
+		SessionID:      "new-session",
+		AgentProfileID: "profile-1",
+		WorkspacePath:  workspace,
+		metadata:       map[string]interface{}{},
+		standalonePort: 41007,
+	}
+
+	require.NoError(t, mgr.materializeRuntimeProjectMCP(context.Background(), oldExecution, agentConfig, nil, ""))
+	require.NoError(t, mgr.materializeRuntimeProjectMCP(context.Background(), newExecution, agentConfig, nil, ""))
+
+	mgr.cleanupPassthroughMCPConfig(oldExecution)
+
+	data, err := os.ReadFile(filepath.Join(workspace, ".pi", "mcp.json"))
+	require.NoError(t, err, "the previous execution must not remove the successor's project config")
+	var payload struct {
+		MCPServers map[string]struct {
+			Transport string `json:"transport"`
+			URL       string `json:"url"`
+			Lifecycle string `json:"lifecycle"`
+		} `json:"mcpServers"`
+	}
+	require.NoError(t, json.Unmarshal(data, &payload))
+	require.Equal(t, "streamable-http", payload.MCPServers[kandevMCPServerName].Transport)
+	require.Equal(t, "http://localhost:41007/mcp", payload.MCPServers[kandevMCPServerName].URL)
+	require.Equal(t, "eager", payload.MCPServers[kandevMCPServerName].Lifecycle)
+
+	mgr.cleanupPassthroughMCPConfig(newExecution)
+	_, err = os.Stat(filepath.Join(workspace, ".pi", "mcp.json"))
+	require.ErrorIs(t, err, os.ErrNotExist, "the last owned execution may clean its project config")
+}
+
+func TestPiProjectMCPUserFileSurvivesTeardown(t *testing.T) {
+	mgr := newTestManager(t)
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, ".pi", "mcp.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, []byte(`{
+		"settings": {"lifecycle": "lazy", "custom": "keep"},
+		"mcpServers": {"user-server": {"command": "user-tool", "lifecycle": "lazy"}}
+	}`), 0o600))
+
+	agentConfig, ok := mgr.registry.Get("pi-acp")
+	require.True(t, ok, "pi-acp agent missing from test registry")
+	execution := &AgentExecution{
+		ID:             "user-file-execution",
+		TaskID:         "task-1",
+		SessionID:      "session-1",
+		AgentProfileID: "profile-1",
+		WorkspacePath:  workspace,
+		metadata:       map[string]interface{}{},
+		standalonePort: 41007,
+	}
+
+	require.NoError(t, mgr.materializeRuntimeProjectMCP(context.Background(), execution, agentConfig, nil, ""))
+	mgr.cleanupPassthroughMCPConfig(execution)
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err, "a user-owned project file must not be deleted")
+	var payload struct {
+		Settings   map[string]string `json:"settings"`
+		MCPServers map[string]struct {
+			Command   string `json:"command"`
+			Lifecycle string `json:"lifecycle"`
+			URL       string `json:"url"`
+		} `json:"mcpServers"`
+	}
+	require.NoError(t, json.Unmarshal(data, &payload))
+	require.Equal(t, "lazy", payload.Settings["lifecycle"])
+	require.Equal(t, "keep", payload.Settings["custom"])
+	require.Equal(t, "user-tool", payload.MCPServers["user-server"].Command)
+	require.Equal(t, "lazy", payload.MCPServers["user-server"].Lifecycle)
+	require.Equal(t, "http://localhost:41007/mcp", payload.MCPServers[kandevMCPServerName].URL)
+	// The Kandev entry is merged into the user file, so it is intentionally not
+	// treated as a removable Kandev-owned file during teardown.
+	require.Empty(t, getPassthroughMCPClaims(execution))
+}
+
+func TestMaterializePassthroughFileExistingMergeKeyDoesNotOwnUserFile(t *testing.T) {
+	mgr := newTestManager(t)
+	path := filepath.Join(t.TempDir(), "mcp.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"mcpServers":{"user-server":{"command":"user-tool"}}}`), 0o600))
+	execution := &AgentExecution{ID: "user-file-execution", metadata: map[string]interface{}{}}
+
+	owned, err := mgr.materializePassthroughFile(execution, mcpconfig.PassthroughConfigFile{
+		Path:     path,
+		Content:  []byte(`{"mcpServers":{"kandev":{"url":"http://localhost:41007/mcp"}}}`),
+		MergeKey: "mcpServers",
+	})
+
+	require.NoError(t, err)
+	require.False(t, owned, "an existing MergeKey file remains user-owned")
+	require.Empty(t, getPassthroughMCPClaims(execution))
+}
+
+func TestPiProjectMCPUserEditDisablesOwnedCleanup(t *testing.T) {
+	mgr := newTestManager(t)
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, ".pi", "mcp.json")
+	agentConfig, ok := mgr.registry.Get("pi-acp")
+	require.True(t, ok, "pi-acp agent missing from test registry")
+	execution := &AgentExecution{
+		ID:             "edited-file-execution",
+		SessionID:      "session-1",
+		WorkspacePath:  workspace,
+		metadata:       map[string]interface{}{},
+		standalonePort: 41007,
+	}
+
+	require.NoError(t, mgr.materializeRuntimeProjectMCP(context.Background(), execution, agentConfig, nil, ""))
+	require.NoError(t, os.WriteFile(path, []byte(`{"settings":{"owner":"user"}}`), 0o600))
+
+	mgr.cleanupPassthroughMCPConfig(execution)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err, "cleanup must leave a file whose bytes changed after materialization")
+	require.JSONEq(t, `{"settings":{"owner":"user"}}`, string(data))
+}
+
+func TestPiProjectMCPMaterializeAndCleanupAreSerialized(t *testing.T) {
+	mgr := newTestManager(t)
+	workspace := t.TempDir()
+	agentConfig, ok := mgr.registry.Get("pi-acp")
+	require.True(t, ok, "pi-acp agent missing from test registry")
+	oldExecution := &AgentExecution{
+		ID:             "old-execution",
+		SessionID:      "old-session",
+		WorkspacePath:  workspace,
+		metadata:       map[string]interface{}{},
+		standalonePort: 41006,
+	}
+	newExecution := &AgentExecution{
+		ID:             "new-execution",
+		SessionID:      "new-session",
+		WorkspacePath:  workspace,
+		metadata:       map[string]interface{}{},
+		standalonePort: 41007,
+	}
+	require.NoError(t, mgr.materializeRuntimeProjectMCP(context.Background(), oldExecution, agentConfig, nil, ""))
+
+	start := make(chan struct{})
+	materializeErr := make(chan error, 1)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		materializeErr <- mgr.materializeRuntimeProjectMCP(context.Background(), newExecution, agentConfig, nil, "")
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		mgr.cleanupPassthroughMCPConfig(oldExecution)
+	}()
+	close(start)
+	wg.Wait()
+	require.NoError(t, <-materializeErr)
+
+	data, err := os.ReadFile(filepath.Join(workspace, ".pi", "mcp.json"))
+	require.NoError(t, err, "the serialized operations must leave the successor file present")
+	var payload struct {
+		MCPServers map[string]struct {
+			URL string `json:"url"`
+		} `json:"mcpServers"`
+	}
+	require.NoError(t, json.Unmarshal(data, &payload))
+	require.Equal(t, "http://localhost:41007/mcp", payload.MCPServers[kandevMCPServerName].URL)
+}
+
+func TestPiProjectMCPRecoveredOwnershipProtectsSuccessor(t *testing.T) {
+	workspace := t.TempDir()
+	firstManager := newTestManager(t)
+	firstAgent, ok := firstManager.registry.Get("pi-acp")
+	require.True(t, ok, "pi-acp agent missing from test registry")
+	firstExecution := &AgentExecution{
+		ID:             "recovered-old-execution",
+		SessionID:      "recovered-old-session",
+		WorkspacePath:  workspace,
+		metadata:       map[string]interface{}{},
+		standalonePort: 41006,
+	}
+	require.NoError(t, firstManager.materializeRuntimeProjectMCP(context.Background(), firstExecution, firstAgent, nil, ""))
+
+	// Reconstruct the old execution from the persisted metadata that survives
+	// an in-process backend restart. The new manager has no active claim map.
+	persistedMetadata := FilterPersistentMetadata(firstExecution.MetadataSnapshot())
+	persistedJSON, err := json.Marshal(persistedMetadata)
+	require.NoError(t, err)
+	var recoveredMetadata map[string]interface{}
+	require.NoError(t, json.Unmarshal(persistedJSON, &recoveredMetadata))
+	recovered := &AgentExecution{
+		ID:            firstExecution.ID,
+		SessionID:     firstExecution.SessionID,
+		WorkspacePath: workspace,
+		metadata:      recoveredMetadata,
+	}
+	secondManager := newTestManager(t)
+	require.NoError(t, secondManager.executionStore.Add(recovered))
+	secondAgent, ok := secondManager.registry.Get("pi-acp")
+	require.True(t, ok, "pi-acp agent missing from restarted manager registry")
+	newExecution := &AgentExecution{
+		ID:             "recovered-new-execution",
+		SessionID:      "recovered-new-session",
+		WorkspacePath:  workspace,
+		metadata:       map[string]interface{}{},
+		standalonePort: 41007,
+	}
+	require.NoError(t, secondManager.materializeRuntimeProjectMCP(context.Background(), newExecution, secondAgent, nil, ""))
+
+	secondManager.cleanupPassthroughMCPConfig(recovered)
+	data, err := os.ReadFile(filepath.Join(workspace, ".pi", "mcp.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "http://localhost:41007/mcp")
+
+	secondManager.cleanupPassthroughMCPConfig(newExecution)
+}
+
+func TestPiProjectMCPSuccessorCleanupCanFinishBeforePredecessor(t *testing.T) {
+	mgr := newTestManager(t)
+	workspace := t.TempDir()
+	agentConfig, ok := mgr.registry.Get("pi-acp")
+	require.True(t, ok, "pi-acp agent missing from test registry")
+	oldExecution := &AgentExecution{
+		ID:             "old-execution",
+		SessionID:      "old-session",
+		WorkspacePath:  workspace,
+		metadata:       map[string]interface{}{},
+		standalonePort: 41006,
+	}
+	newExecution := &AgentExecution{
+		ID:             "new-execution",
+		SessionID:      "new-session",
+		WorkspacePath:  workspace,
+		metadata:       map[string]interface{}{},
+		standalonePort: 41007,
+	}
+	require.NoError(t, mgr.materializeRuntimeProjectMCP(context.Background(), oldExecution, agentConfig, nil, ""))
+	require.NoError(t, mgr.materializeRuntimeProjectMCP(context.Background(), newExecution, agentConfig, nil, ""))
+
+	// The successor may finish first, but the file remains until the predecessor
+	// releases the adopted current generation as well.
+	mgr.cleanupPassthroughMCPConfig(newExecution)
+	_, err := os.Stat(filepath.Join(workspace, ".pi", "mcp.json"))
+	require.NoError(t, err)
+	mgr.cleanupPassthroughMCPConfig(oldExecution)
+	_, err = os.Stat(filepath.Join(workspace, ".pi", "mcp.json"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
 // TestWriteFileNoFollowLeavesConcurrentlyCreatedFileAlone pins the O_EXCL
 // contract: a file that appeared between the lstat and the create is left
 // untouched and NOT tracked for cleanup.
@@ -251,6 +519,11 @@ func TestCleanupPassthroughMCPConfigToleratesRemovalFailure(t *testing.T) {
 
 	execution := &AgentExecution{ID: "exec-1"}
 	setPassthroughMCPFiles(execution, []string{nonEmpty, removable, filepath.Join(dir, "already-gone.json")})
+	setPassthroughMCPClaims(execution, []passthroughMCPFileClaim{
+		{Path: nonEmpty, Fingerprint: passthroughMCPFingerprint(nil), Owned: true},
+		{Path: removable, Fingerprint: passthroughMCPFingerprint([]byte(`{}`)), Owned: true},
+		{Path: filepath.Join(dir, "already-gone.json"), Fingerprint: passthroughMCPFingerprint(nil), Owned: true},
+	})
 	setPassthroughMCPEnv(execution, map[string]string{"OPENCODE_CONFIG": removable})
 
 	mgr.cleanupPassthroughMCPConfig(execution)
