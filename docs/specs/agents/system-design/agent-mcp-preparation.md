@@ -153,9 +153,10 @@ workspace-relative project file and Kandev-owned temporary files without
 changing the existing strategy-specific file format.
 
 The manager mutex is paired with an OS advisory lock derived from the canonical
-file path. The lock handle is kept in Kandev's private temporary directory, not
-in the workspace, so overlapping backend processes during restart serialize the
-filesystem operation without adding project metadata.
+file path. The lock handle is kept in the current user's private cache
+directory, not in the shared temporary directory or workspace, so overlapping
+backend processes during restart serialize the filesystem operation without
+allowing another operating system user to block it or adding project metadata.
 
 Each participating execution has a non-secret claim record containing only the
 normalized path and a SHA-256 fingerprint of the generated file bytes. The
